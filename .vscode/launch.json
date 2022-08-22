@@ -10,7 +10,13 @@
             "request": "launch",
             "program": "main.py",
             "console": "integratedTerminal",
-            "justMyCode": true
+            "justMyCode": true,
+            "args": [
+                //     "-l",
+                //     "python"
+                "-t",
+                "20"
+            ]
         }
     ]
 }

@@ -3,6 +3,10 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 from re import search, findall
 from argparse import ArgumentParser
+from concurrent import futures
+from queue import Queue
+
+
 
 TAM_COL = 150
 
@@ -11,26 +15,43 @@ class JobCampinas:
     def __init__(self) -> None:
         self.occupations: list = []
         self.args: ArgumentParser = self.get_parse()        
+        self.url: str = 'https://empregacampinas.com.br/categoria/vaga/'
         
     def __call__(self):
         self.print('START CRAWLER')        
         self.print(f'ARGS RECEIVE: {self.args}')
-        if self.args.l:
-            self.url.replace('/categoria/vaga/', '/?' + '+'.join(self.args.l))
+        self.load = '/?s=' + self.args.l if self.args.l else ''
             
         for page in range(self.args.i, self.args.f):
-            self.url = f'https://empregacampinas.com.br/categoria/vaga/page/{page}'
+            self.url = f'https://empregacampinas.com.br/categoria/vaga/page/{page}' + self.load
             pages = self.get_link_page()
             urls = self.extract_url(pages)
+            
+            self.queue = Queue()
+            for page in urls:
+                self.queue.put(page)
+                
+            self.run()
             self.print('-' * TAM_COL)
-            jobs = self.extract_jobs_pages(urls)
+            print('\n')
+            
+    def run(self) -> None:
+        works = []
+        with futures.ThreadPoolExecutor(max_workers=self.args.t) as pool:
+            for work in range(self.args.t):
+                works.append(pool.submit(self.extract_jobs_pages, work))
+            futures.wait(works, return_when='ALL_COMPLETED')
             self.print('-' * TAM_COL)
-            self.print_jobs(jobs)
+            self.print_jobs(works)
             
     def print_jobs(self, jobs: list) -> None:
-        reges_items = {'email': '[\w|\d|\.]*@[\w|\d|]+\.[\w|\d|]*\.?[\w|\d|]*', 
+        reges_items = {'email': r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', 
                        'interested': 'aos\scuidados[\s|\w|\d]+'}
-        for job in jobs:
+        for job in futures.as_completed(jobs):
+            job = job.result()
+            if not job:
+                continue
+            job = job[0]
             self.print('-' * TAM_COL)
             self.print(job)
             for reg in reges_items.items():
@@ -41,14 +62,16 @@ class JobCampinas:
         html = self.get_html(self.url)
         return self.get_parse_html(html.text, ('a', {'class': 'thumbnail'}))
 
-    def extract_jobs_pages(self, urls: list) -> list:
+    def extract_jobs_pages(self, th) -> list:
         jobs = []
-        for url in urls:
-            self.print(f'Jobs title: {url[1]}')
+        while not self.queue.empty():
+            url = self.queue.get()
+            self.print(f'Jobs thread:{th} title: {url[1]}')
             if job:=self.get_job_page(url[0]):
                 if job.text not in self.occupations:
-                    jobs.append(job.text)
-                    self.occupations.append(job.text)
+                    fmt = '\n'.join([x.text for x in job.findAll('p')])
+                    jobs.append(fmt)
+                    self.occupations.append(fmt)
         return jobs
             
     @classmethod
@@ -82,7 +105,7 @@ class JobCampinas:
         parser = ArgumentParser()
         parser.add_argument('-t', help='number the thread in pages', type=int, default=1)
         parser.add_argument('-l', help='what is load expected?', type=str)
-        parser.add_argument('-i', help='page init', type=int, default=2)
+        parser.add_argument('-i', help='page init', type=int, default=1)
         parser.add_argument('-f', help='page final', type=int, default=99)
         args = parser.parse_args()
         return args
